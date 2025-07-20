@@ -9,8 +9,14 @@ export function generateInvoiceXml(invoice: Invoice) {
 }
 
 export function generateInvoice(invoiceData: InvoiceInput) {
+  // Parse fechaEmision as DD/MM/YYYY into a Date object
+  const [day, month, year] = invoiceData.infoFactura.fechaEmision
+    .split("/")
+    .map(Number);
+  const dateObj = new Date(year, month - 1, day);
+
   const accessKey = generateAccessKey({
-    date: new Date(invoiceData.infoFactura.fechaEmision),
+    date: dateObj,
     codDoc: invoiceData.infoTributaria.codDoc,
     ruc: invoiceData.infoTributaria.ruc,
     environment: invoiceData.infoTributaria.ambiente,
@@ -25,7 +31,19 @@ export function generateInvoice(invoiceData: InvoiceInput) {
       "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
       "@id": "comprobante",
       "@version": "1.0.0",
-      infoTributaria: { ...invoiceData.infoTributaria, claveAcceso: accessKey },
+      infoTributaria: {
+        ambiente: invoiceData.infoTributaria.ambiente,
+        tipoEmision: invoiceData.infoTributaria.tipoEmision,
+        razonSocial: invoiceData.infoTributaria.razonSocial,
+        nombreComercial: invoiceData.infoTributaria.nombreComercial,
+        ruc: invoiceData.infoTributaria.ruc,
+        claveAcceso: accessKey,
+        codDoc: invoiceData.infoTributaria.codDoc,
+        estab: invoiceData.infoTributaria.estab,
+        ptoEmi: invoiceData.infoTributaria.ptoEmi,
+        secuencial: invoiceData.infoTributaria.secuencial,
+        dirMatriz: invoiceData.infoTributaria.dirMatriz,
+      },
       infoFactura: invoiceData.infoFactura,
       detalles: invoiceData.detalles,
     },
