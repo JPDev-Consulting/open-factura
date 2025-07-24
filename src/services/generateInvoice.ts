@@ -3,8 +3,8 @@ import { Invoice, InvoiceInput } from "../baseData/invoice/invoice";
 import { generateAccessKey } from "../utils/utils";
 
 export function generateInvoiceXml(invoice: Invoice) {
-  const document = create(invoice);
-  const xml = document.end({ prettyPrint: true });
+  const document = create({ version: "1.0", encoding: "UTF-8" }, invoice);
+  const xml = document.end({ prettyPrint: false });
   return xml;
 }
 
@@ -27,10 +27,8 @@ export function generateInvoice(invoiceData: InvoiceInput) {
 
   const invoice: Invoice = {
     factura: {
-      "@xmlns:ds": "http://www.w3.org/2000/09/xmldsig#",
-      "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
       "@id": "comprobante",
-      "@version": "1.0.0",
+      "@version": "1.1.0",
       infoTributaria: {
         ambiente: invoiceData.infoTributaria.ambiente,
         tipoEmision: invoiceData.infoTributaria.tipoEmision,

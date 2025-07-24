@@ -30,13 +30,11 @@ export async function getXMLFromLocalUrl(url: string) {
   return file;
 }
 
-function sha1Base64(text: string, encoding: forge.Encoding = "utf8") {
-  let md = forge.md.sha1.create();
+function sha256Base64(text: string, encoding: forge.Encoding = "utf8") {
+  const md = forge.md.sha256.create();
   md.update(text, encoding);
-  const hash = md.digest().toHex();
-  const buffer = Buffer.from(hash, "hex");
-  const base64 = buffer.toString("base64");
-  return base64;
+  const hashHex = md.digest().toHex();
+  return Buffer.from(hashHex, "hex").toString("base64");
 }
 
 function hexToBase64(hex: string) {
@@ -147,7 +145,7 @@ export async function signXml(
 
   const certificateX509_asn1 = forge.pki.certificateToAsn1(certificate!);
   const certificateX509_der = forge.asn1.toDer(certificateX509_asn1).getBytes();
-  const hash_certificateX509_der = sha1Base64(certificateX509_der, "utf8");
+  const hash_certificateX509_der = sha256Base64(certificateX509_der, "utf8");
   const certificateX509_serialNumber = parseInt(certificate!.serialNumber, 16);
 
   const exponent = hexToBase64(key.e.data[0].toString(16));
@@ -155,13 +153,13 @@ export async function signXml(
 
   xml = xml.replace(/\t|\r/g, "");
 
-  const sha1_xml = sha1Base64(
+  const sha1_xml = sha256Base64(
     xml.replace('<?xml version="1.0" encoding="UTF-8"?>', ""),
     "utf8"
   );
 
   const nameSpaces =
-    'xmlns:ds="http://www.w3.org/2000/09/xmldsig#" xmlns:etsi="http://uri.etsi.org/01903/v1.3.2#"';
+    'xmlns:ds="http://www.w3.org/2000/09/xmldsig#" xmlns:xades="http://uri.etsi.org/01903/v1.3.2#"';
 
   const certificateNumber = getRandomNumber();
   const signatureNumber = getRandomNumber();
@@ -172,61 +170,79 @@ export async function signXml(
   const signatureValueNumber = getRandomNumber();
   const objectNumber = getRandomNumber();
 
-  const isoDateTime = date.toISOString().slice(0, 19);
+  function getSigningTime(): string {
+    const dt = new Date();
+    const pad = (n: number, z = 2) => ("00" + n).slice(-z);
+    const ms = ("00" + dt.getMilliseconds()).slice(-3);
+    const offset = -dt.getTimezoneOffset();
+    const sign = offset >= 0 ? "+" : "-";
+    const h = pad(Math.floor(Math.abs(offset) / 60));
+    const m = pad(Math.abs(offset) % 60);
+    return (
+      `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}` +
+      `T${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}` +
+      `.${ms}${sign}${h}:${m}`
+    );
+  }
+
+  const isoDateTime = getSigningTime();
 
   let signedProperties = "";
   signedProperties +=
-    '<etsi:SignedProperties Id="Signature' +
+    '<xades:SignedProperties Id="Signature' +
     signatureNumber +
     "-SignedProperties" +
     signedPropertiesNumber +
     '">';
 
-  signedProperties += "<etsi:SignedSignatureProperties>";
-  signedProperties += "<etsi:SigningTime>";
+  signedProperties += "<xades:SignedSignatureProperties>";
+  signedProperties += "<xades:SigningTime>";
   signedProperties += isoDateTime;
-  signedProperties += "</etsi:SigningTime>";
-  signedProperties += "<etsi:SigningCertificate>";
-  signedProperties += "<etsi:Cert>";
-  signedProperties += "<etsi:CertDigest>";
+  signedProperties += "</xades:SigningTime>";
+  signedProperties += "<xades:SigningCertificate>";
+  signedProperties += "<xades:Cert>";
+  signedProperties += "<xades:CertDigest>";
   signedProperties +=
-    '<ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1">';
-  signedProperties += "</ds:DigestMethod>";
+    '<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>';
   signedProperties += "<ds:DigestValue>";
   signedProperties += hash_certificateX509_der;
   signedProperties += "</ds:DigestValue>";
-  signedProperties += "</etsi:CertDigest>";
-  signedProperties += "<etsi:IssuerSerial>";
+  signedProperties += "</xades:CertDigest>";
+  signedProperties += "<xades:IssuerSerial>";
   signedProperties += "<ds:X509IssuerName>";
   signedProperties += issuerName;
   signedProperties += "</ds:X509IssuerName>";
   signedProperties += "<ds:X509SerialNumber>";
   signedProperties += certificateX509_serialNumber;
   signedProperties += "</ds:X509SerialNumber>";
-  signedProperties += "</etsi:IssuerSerial>";
-  signedProperties += "</etsi:Cert>";
-  signedProperties += "</etsi:SigningCertificate>";
-  signedProperties += "</etsi:SignedSignatureProperties>";
+  signedProperties += "</xades:IssuerSerial>";
+  signedProperties += "</xades:Cert>";
+  signedProperties += "</xades:SigningCertificate>";
+  signedProperties += "</xades:SignedSignatureProperties>";
 
-  signedProperties += "<etsi:SignedDataObjectProperties>";
+  signedProperties += "<xades:SignedDataObjectProperties>";
   signedProperties +=
-    '<etsi:DataObjectFormat ObjectReference="#Reference-ID=' +
+    '<xades:DataObjectFormat ObjectReference="#Reference-ID=' +
     referenceIdNumber +
     '">';
-  signedProperties += "<etsi:Description>";
-  signedProperties += "contenido comprobante";
-  signedProperties += "</etsi:Description>";
-  signedProperties += "<etsi:MimeType>";
+  signedProperties += "<xades:Description>";
+  signedProperties += "FIRMA DIGITAL SRI";
+  signedProperties += "</xades:Description>";
+  signedProperties += "<xades:MimeType>";
   signedProperties += "text/xml";
-  signedProperties += "</etsi:MimeType>";
-  signedProperties += "</etsi:DataObjectFormat>";
-  signedProperties += "</etsi:SignedDataObjectProperties>";
-  signedProperties += "</etsi:SignedProperties>";
+  signedProperties += "</xades:MimeType>";
+  // <xades:Encoding>UTF-8</xades:Encoding>
+  signedProperties += "<xades:Encoding>";
+  signedProperties += "UTF-8";
+  signedProperties += "</xades:Encoding>";
+  signedProperties += "</xades:DataObjectFormat>";
+  signedProperties += "</xades:SignedDataObjectProperties>";
+  signedProperties += "</xades:SignedProperties>";
 
-  const sha1SignedProperties = sha1Base64(
+  const sha1SignedProperties = sha256Base64(
     signedProperties.replace(
-      "<ets:SignedProperties",
-      "<etsi:SignedProperties " + nameSpaces
+      "<xades:SignedProperties",
+      "<xades:SignedProperties " + nameSpaces
     ),
     "utf8"
   );
@@ -238,70 +254,42 @@ export async function signXml(
   keyInfo += certificateX509;
   keyInfo += "\n</ds:X509Certificate>";
   keyInfo += "\n</ds:X509Data>";
-  keyInfo += "\n<ds:KeyValue>";
-  keyInfo += "\n<ds:RSAKeyValue>";
-  keyInfo += "\n<ds:Modulus>\n";
-  keyInfo += modulus;
-  keyInfo += "\n</ds:Modulus>";
-  keyInfo += "\n<ds:Exponent>\n";
-  keyInfo += exponent;
-  keyInfo += "\n</ds:Exponent>";
-  keyInfo += "\n</ds:RSAKeyValue>";
-  keyInfo += "\n</ds:KeyValue>";
   keyInfo += "\n</ds:KeyInfo>";
 
-  const sha1KeyInfo = sha1Base64(
-    keyInfo.replace("<ds:KeyInfo", "<ds:KeyInfo " + nameSpaces),
-    "utf8"
-  );
-
   let signedInfo = "";
+  signedInfo += "<ds:SignedInfo>";
   signedInfo +=
-    '<ds:SignedInfo Id="Signature-SignedInfo' + signedInfoNumber + '">';
+    '\n<ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>';
   signedInfo +=
-    '\n<ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315">';
-  signedInfo += "</ds:CanonicalizationMethod>";
-  signedInfo +=
-    '\n<ds:SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1">';
-  signedInfo += "</ds:SignatureMethod>";
-  signedInfo +=
-    '\n<ds:Reference Id="SignedPropertiesID' +
-    signedPropertiesIdNumber +
-    '" Type="http://uri.etsi.org/01903#SignedProperties" URI="#Signature' +
-    signatureNumber +
-    "-SignedProperties" +
-    signedPropertiesNumber +
-    '">';
-  signedInfo +=
-    '\n<ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1">';
-  signedInfo += "</ds:DigestMethod>";
-  signedInfo += "\n<ds:DigestValue>";
-  signedInfo += sha1SignedProperties;
-  signedInfo += "</ds:DigestValue>";
-  signedInfo += "\n</ds:Reference>";
-  signedInfo += '\n<ds:Reference URI="#Certificate' + certificateNumber + '">';
-  signedInfo +=
-    '\n<ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1">';
-  signedInfo += "</ds:DigestMethod>";
-  signedInfo += "\n<ds:DigestValue>";
-  signedInfo += sha1KeyInfo;
-  signedInfo += "</ds:DigestValue>";
-  signedInfo += "\n</ds:Reference>";
+    '\n<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>';
 
+  // 1️⃣ Referencia al comprobante
   signedInfo +=
     '\n<ds:Reference Id="Reference-ID' +
     referenceIdNumber +
     '" URI="#comprobante">';
   signedInfo += "\n<ds:Transforms>";
   signedInfo +=
-    '\n<ds:Transform Algorithm="http://www.w3.org/2000/09/xmlndsig#enveloped-signature">';
-  signedInfo += "</ds:Transform>";
+    '\n<ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>';
   signedInfo += "\n</ds:Transforms>";
   signedInfo +=
-    '\n<ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1">';
-  signedInfo += "</ds:DigestMethod>";
+    '\n<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>';
   signedInfo += "\n<ds:DigestValue>";
   signedInfo += sha1_xml;
+  signedInfo += "</ds:DigestValue>";
+  signedInfo += "\n</ds:Reference>";
+
+  // 2️⃣ Referencia a SignedProperties
+  signedInfo +=
+    '\n<ds:Reference Type="http://uri.etsi.org/01903#SignedProperties" URI="#Signature' +
+    signatureNumber +
+    "-SignedProperties" +
+    signedPropertiesNumber +
+    '">';
+  signedInfo +=
+    '\n<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>';
+  signedInfo += "\n<ds:DigestValue>";
+  signedInfo += sha1SignedProperties;
   signedInfo += "</ds:DigestValue>";
   signedInfo += "\n</ds:Reference>";
 
@@ -312,15 +300,12 @@ export async function signXml(
     "<ds:SignedInfo " + nameSpaces
   );
 
-  const md = forge.md.sha1.create();
+  const md = forge.md.sha256.create();
   md.update(canonicalizedSignedInfo, "utf8");
-
-  const signature = btoa(
-    key
-      .sign(md)
-      .match(/.{1,76}/g)
-      .join("\n")
-  );
+  const signature = Buffer.from(key.sign(md), "binary")
+    .toString("base64")
+    .match(/.{1,76}/g)!
+    .join("\n");
 
   let xadesBes = "";
   xadesBes +=
@@ -333,18 +318,18 @@ export async function signXml(
   xadesBes += signature;
   xadesBes += "\n</ds:SignatureValue>";
   xadesBes += "\n" + keyInfo;
-  xadesBes +=
-    '\n<ds:Object Id="Signature' +
-    signatureNumber +
-    "-Object" +
-    objectNumber +
-    '">';
+  xadesBes += "\n<ds:Object>";
 
   xadesBes +=
-    '<etsi:QualifyingProperties Target="#Signature' + signatureNumber + '">';
+    "<xades:QualifyingProperties " +
+    'Target="#Signature' +
+    signatureNumber +
+    '" ' +
+    'xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" ' +
+    'xmlns:xades141="http://uri.etsi.org/01903/v1.4.1#">';
   xadesBes += signedProperties;
 
-  xadesBes += "</etsi:QualifyingProperties>";
+  xadesBes += "</xades:QualifyingProperties>";
   xadesBes += "</ds:Object>";
   xadesBes += "</ds:Signature>";
 

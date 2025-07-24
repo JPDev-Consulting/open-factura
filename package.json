@@ -1,8 +1,10 @@
 {
-  "name": "open-factura",
+  "name": "@jpdev-consulting/open-factura",
   "version": "0.1.1",
   "author": {
-    "name": "Miguel Langarano"
+    "name": "Jordan Borja",
+    "email": "www.jrdnbrj@gmail.com",
+    "url": "https://github.com/jrdnbrj"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -12,7 +14,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/miguelangarano/open-factura.git"
+    "url": "git+https://github.com/JPDev-Consulting/open-factura.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com/"
   },
   "scripts": {
     "build": "tsup",
