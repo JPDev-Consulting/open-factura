@@ -1,337 +1,194 @@
 import * as forge from "node-forge";
 import { readFileSync } from "fs";
-import fetch from "node-fetch";
-
-export function getP12FromLocalFile(path: string) {
+import axios from "axios";
+import { signInvoiceXml } from 'ec-sri-invoice-signer';
+/**
+ * Load a .p12 (PKCS#12) file from disk and return its raw ArrayBuffer.
+ */
+export function getP12FromLocalFile(path: string): ArrayBuffer {
   const file = readFileSync(path);
-  const buffer = file.buffer.slice(
+  // Slice out the underlying ArrayBuffer
+  return file.buffer.slice(
     file.byteOffset,
     file.byteOffset + file.byteLength
   );
-  return buffer;
 }
 
-export async function getP12FromUrl(url: string) {
-  const file = await fetch(url)
-    .then((response) => response.arrayBuffer())
-    .then((data) => data);
-  return file;
+/**
+ * Download a .p12 file from a URL and return its raw ArrayBuffer.
+ */
+export async function getP12FromUrl(url: string): Promise<ArrayBuffer> {
+  const response = await axios.get<ArrayBuffer>(url, {
+    responseType: "arraybuffer",
+  });
+  return response.data;
 }
 
-export function getXMLFromLocalFile(path: string) {
-  const file = readFileSync(path, "utf8");
-  return file;
+/**
+ * Load an XML file from disk and return it as a string.
+ */
+export function getXMLFromLocalFile(path: string): string {
+  return readFileSync(path, "utf8");
 }
 
-export async function getXMLFromLocalUrl(url: string) {
-  const file = await fetch(url)
-    .then((response) => response.text())
-    .then((data) => data);
-  return file;
+/**
+ * Download an XML file from a URL and return it as a string.
+ */
+export async function getXMLFromLocalUrl(url: string): Promise<string> {
+  const response = await axios.get<string>(url, {
+    responseType: "text",
+  });
+  return response.data;
 }
 
-function sha256Base64(text: string, encoding: forge.Encoding = "utf8") {
+/** Helper: SHA‑256 digest of a string, base64‑encoded */
+function sha256Base64(text: string, encoding: forge.Encoding = "utf8"): string {
   const md = forge.md.sha256.create();
   md.update(text, encoding);
   const hashHex = md.digest().toHex();
   return Buffer.from(hashHex, "hex").toString("base64");
 }
 
-function hexToBase64(hex: string) {
+/** Helper: Convert hex string to base64 */
+function hexToBase64(hex: string): string {
   hex = hex.padStart(hex.length + (hex.length % 2), "0");
-  const bytes = hex.match(/.{2}/g)!.map((byte) => parseInt(byte, 16));
-  return btoa(String.fromCharCode(...bytes));
+  const bytes = hex.match(/.{2}/g)!.map(byte => parseInt(byte, 16));
+  return Buffer.from(bytes).toString("base64");
 }
 
-function bigIntToBase64(bigInt: number) {
+/** Helper: Convert a big integer to base64 PEM‑style chunks */
+function bigIntToBase64(bigInt: number): string {
   const hex = bigInt.toString(16);
-  const hexPairs = hex.match(/\w{2}/g);
-  const bytes = hexPairs!.map((pair) => parseInt(pair, 16));
+  const bytes = hex.match(/\w{2}/g)!.map(pair => parseInt(pair, 16));
   const byteString = String.fromCharCode(...bytes);
-  const base64 = btoa(byteString);
-  const formatedBase64 = base64.match(/.{1,76}/g)!.join("\n");
-  return formatedBase64;
+  const base64 = Buffer.from(byteString, "binary").toString("base64");
+  // wrap at 76 characters per PEM spec
+  return base64.match(/.{1,76}/g)!.join("\n");
 }
 
-function getRandomNumber(min = 990, max = 9999) {
+/** Helper: random integer between min and max */
+function getRandomNumber(min = 990, max = 9999): number {
   return Math.floor(Math.random() * (max - min + 1) + min);
 }
 
+/**
+ * Sign an XML string using a PKCS#12 certificate.
+ * Returns the XML with an embedded ds:Signature element.
+ */
 export async function signXml(
   p12Data: ArrayBuffer,
   p12Password: string,
   xmlData: string
-) {
-  const arrayBuffer = p12Data;
-  let xml = xmlData;
-  xml = xml.replace(/\s+/g, " ");
-  xml = xml.trim();
-  xml = xml.replace(/(?<=\>)(\r?\n)|(\r?\n)(?=\<\/)/g, "");
-  xml = xml.trim();
+): Promise<string> {
+  // Normalize whitespace
+  let xml = xmlData.replace(/\s+/g, " ").trim();
+  xml = xml.replace(/(?<=\>)(\r?\n)|(\r?\n)(?=\<\/)/g, "").trim();
   xml = xml.replace(/(?<=\>)(\s*)/g, "");
 
-  const arrayUint8 = new Uint8Array(arrayBuffer);
-  const base64 = forge.util.binary.base64.encode(arrayUint8);
-  const der = forge.util.decode64(base64);
-
-  const asn1 = forge.asn1.fromDer(der);
+  // Decode the P12
+  const arrayUint8 = new Uint8Array(p12Data);
+  const b64 = forge.util.binary.base64.encode(arrayUint8);
+  const derBytes = forge.util.decode64(b64);
+  const asn1 = forge.asn1.fromDer(derBytes);
   const p12 = forge.pkcs12.pkcs12FromAsn1(asn1, p12Password);
-  const pkcs8Bags = p12.getBags({
-    bagType: forge.pki.oids.pkcs8ShroudedKeyBag,
-  });
-  const certBags = p12.getBags({
-    bagType: forge.pki.oids.certBag,
-  });
-  const certBag = certBags[(forge as any).oids.certBag];
 
-  const friendlyName = certBag![1].attributes.friendlyName[0];
+  const signedInvoice = signInvoiceXml(xmlData, Buffer.from(p12Data), { pkcs12Password: p12Password });
 
-  let certificate;
-  let pkcs8;
-  let issuerName = "";
+  return signedInvoice;
+  // Extract key and certificate bags
+  const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
+  const certBags = p12.getBags({ bagType: forge.pki.oids.certBag });
+  const certBagArray = certBags[(forge as any).oids.certBag]!;
+  // Pick the leaf certificate
+  const cert = certBagArray.reduce((prev, curr) =>
+    curr.cert!.extensions.length > prev.cert!.extensions.length ? curr : prev
+  );
 
-  const cert = certBag!.reduce((prev, curr) => {
-    const attributes = curr.cert!.extensions;
-    return attributes.length > prev.cert!.extensions.length ? curr : prev;
-  });
-
-  const issueAttributes = cert.cert!.issuer.attributes;
-
-  issuerName = issueAttributes
-    .reverse()
-    .map((attribute) => {
-      return `${attribute.shortName}=${attribute.value}`;
-    })
-    .join(", ");
-
-  if (/BANCO CENTRAL/i.test(friendlyName)) {
-    let keys = pkcs8Bags[(forge as any).oids.pkcs8ShroudedKeyBag];
-    for (let i = 0; i < keys!.length; i++) {
-      const element = keys![i];
-      let name = element.attributes.friendlyName[0];
-      if (/Signing Key/i.test(name)) {
-        pkcs8 = pkcs8Bags[(forge as any).oids.pkcs8ShroudedKeyBag[i]];
-      }
-    }
-  }
-
-  if (/SECURITY DATA/i.test(friendlyName)) {
-    pkcs8 = pkcs8Bags[(forge as any).oids.pkcs8ShroudedKeyBag]![0];
-  }
-
-  certificate = cert.cert;
-
-  const notBefore = certificate!.validity["notBefore"];
-  const notAfter = certificate!.validity["notAfter"];
-  const date = new Date();
-
-  if (date < notBefore || date > notAfter) {
+  // Check validity dates
+  const notBefore = cert.cert!.validity.notBefore;
+  const notAfter = cert.cert!.validity.notAfter;
+  const now = new Date();
+  if (now < notBefore || now > notAfter) {
     throw new Error("Expired certificate");
   }
 
-  const key = (pkcs8 as any).key ?? (pkcs8 as any).asn1;
-  const certificateX509_pem = forge.pki.certificateToPem(certificate!);
+  // Prepare certificate PEM (stripped headers)
+  let pem = forge.pki.certificateToPem(cert.cert!);
+  pem = pem.replace(/-----BEGIN CERTIFICATE-----[\r\n]?/, "");
+  pem = pem.replace(/[\r\n]?-----END CERTIFICATE-----/, "");
+  pem = pem.replace(/\r?\n|\r/g, "").replace(/(.{76})/g, "$1\n");
 
-  let certificateX509 = certificateX509_pem;
-  certificateX509 = certificateX509.substr(certificateX509.indexOf("\n"));
-  certificateX509 = certificateX509.substr(
-    0,
-    certificateX509.indexOf("\n-----END CERTIFICATE-----")
-  );
+  // Compute certificate digest
+  const derCert = forge.asn1.toDer(forge.pki.certificateToAsn1(cert.cert!)).getBytes();
+  const certDigest = sha256Base64(derCert, "utf8");
 
-  certificateX509 = certificateX509
-    .replace(/\r?\n|\r/g, "")
-    .replace(/([^\0]{76})/g, "$1\n");
-
-  const certificateX509_asn1 = forge.pki.certificateToAsn1(certificate!);
-  const certificateX509_der = forge.asn1.toDer(certificateX509_asn1).getBytes();
-  const hash_certificateX509_der = sha256Base64(certificateX509_der, "utf8");
-  const certificateX509_serialNumber = parseInt(certificate!.serialNumber, 16);
-
-  const exponent = hexToBase64(key.e.data[0].toString(16));
-  const modulus = bigIntToBase64(key.n);
-
-  xml = xml.replace(/\t|\r/g, "");
-
-  const sha1_xml = sha256Base64(
-    xml.replace('<?xml version="1.0" encoding="UTF-8"?>', ""),
-    "utf8"
-  );
-
-  const nameSpaces =
-    'xmlns:ds="http://www.w3.org/2000/09/xmldsig#" xmlns:xades="http://uri.etsi.org/01903/v1.3.2#"';
-
-  const certificateNumber = getRandomNumber();
-  const signatureNumber = getRandomNumber();
-  const signedPropertiesNumber = getRandomNumber();
-  const signedInfoNumber = getRandomNumber();
-  const signedPropertiesIdNumber = getRandomNumber();
-  const referenceIdNumber = getRandomNumber();
-  const signatureValueNumber = getRandomNumber();
-  const objectNumber = getRandomNumber();
-
-  function getSigningTime(): string {
+  // Prepare the SignedProperties XML fragment
+  const getSigningTime = (): string => {
     const dt = new Date();
     const pad = (n: number, z = 2) => ("00" + n).slice(-z);
-    const ms = ("00" + dt.getMilliseconds()).slice(-3);
+    const ms = pad(dt.getMilliseconds(), 3);
     const offset = -dt.getTimezoneOffset();
     const sign = offset >= 0 ? "+" : "-";
     const h = pad(Math.floor(Math.abs(offset) / 60));
     const m = pad(Math.abs(offset) % 60);
     return (
-      `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}` +
+      `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}` +
       `T${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}` +
       `.${ms}${sign}${h}:${m}`
     );
-  }
+  };
 
-  const isoDateTime = getSigningTime();
+  const signingTime = getSigningTime();
+  const ds = 'xmlns:ds="http://www.w3.org/2000/09/xmldsig#"';
+  const xades = 'xmlns:xades="http://uri.etsi.org/01903/v1.3.2#"';
 
-  let signedProperties = "";
-  signedProperties +=
-    '<xades:SignedProperties Id="Signature' +
-    signatureNumber +
-    "-SignedProperties" +
-    signedPropertiesNumber +
-    '">';
+  const sigNum = getRandomNumber();
+  let signedProps = `<xades:SignedProperties Id="Signature${sigNum}-SignedProperties${sigNum}">`;
+  signedProps += `<xades:SignedSignatureProperties>`;
+  signedProps += `<xades:SigningTime>${signingTime}</xades:SigningTime>`;
+  signedProps += `<xades:SigningCertificate><xades:Cert>`;
+  signedProps += `<xades:CertDigest><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>`;
+  signedProps += `<ds:DigestValue>${certDigest}</ds:DigestValue></xades:CertDigest>`;
+  signedProps += `</xades:Cert></xades:SigningCertificate>`;
+  signedProps += `</xades:SignedSignatureProperties>`;
+  signedProps += `</xades:SignedProperties>`;
 
-  signedProperties += "<xades:SignedSignatureProperties>";
-  signedProperties += "<xades:SigningTime>";
-  signedProperties += isoDateTime;
-  signedProperties += "</xades:SigningTime>";
-  signedProperties += "<xades:SigningCertificate>";
-  signedProperties += "<xades:Cert>";
-  signedProperties += "<xades:CertDigest>";
-  signedProperties +=
-    '<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>';
-  signedProperties += "<ds:DigestValue>";
-  signedProperties += hash_certificateX509_der;
-  signedProperties += "</ds:DigestValue>";
-  signedProperties += "</xades:CertDigest>";
-  signedProperties += "<xades:IssuerSerial>";
-  signedProperties += "<ds:X509IssuerName>";
-  signedProperties += issuerName;
-  signedProperties += "</ds:X509IssuerName>";
-  signedProperties += "<ds:X509SerialNumber>";
-  signedProperties += certificateX509_serialNumber;
-  signedProperties += "</ds:X509SerialNumber>";
-  signedProperties += "</xades:IssuerSerial>";
-  signedProperties += "</xades:Cert>";
-  signedProperties += "</xades:SigningCertificate>";
-  signedProperties += "</xades:SignedSignatureProperties>";
+  // Digest of the XML to sign
+  const xmlToSign = xml.replace('<?xml version="1.0" encoding="UTF-8"?>', "");
+  const xmlDigest = sha256Base64(xmlToSign, "utf8");
 
-  signedProperties += "<xades:SignedDataObjectProperties>";
-  signedProperties +=
-    '<xades:DataObjectFormat ObjectReference="#Reference-ID=' +
-    referenceIdNumber +
-    '">';
-  signedProperties += "<xades:Description>";
-  signedProperties += "FIRMA DIGITAL SRI";
-  signedProperties += "</xades:Description>";
-  signedProperties += "<xades:MimeType>";
-  signedProperties += "text/xml";
-  signedProperties += "</xades:MimeType>";
-  // <xades:Encoding>UTF-8</xades:Encoding>
-  signedProperties += "<xades:Encoding>";
-  signedProperties += "UTF-8";
-  signedProperties += "</xades:Encoding>";
-  signedProperties += "</xades:DataObjectFormat>";
-  signedProperties += "</xades:SignedDataObjectProperties>";
-  signedProperties += "</xades:SignedProperties>";
+  // Build SignedInfo
+  let signedInfo = `<ds:SignedInfo>`;
+  signedInfo += `<ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>`;
+  signedInfo += `<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>`;
+  signedInfo += `<ds:Reference Id="Reference-ID${sigNum}" URI="#comprobante">`;
+  signedInfo += `<ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/></ds:Transforms>`;
+  signedInfo += `<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>`;
+  signedInfo += `<ds:DigestValue>${xmlDigest}</ds:DigestValue>`;
+  signedInfo += `</ds:Reference>`;
+  signedInfo += `<ds:Reference Type="http://uri.etsi.org/01903#SignedProperties" URI="#Signature${sigNum}-SignedProperties${sigNum}">`;
+  signedInfo += `<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>`;
+  // Digest of SignedProperties
+  const signedPropsDigest = sha256Base64(signedProps.replace("<xades:SignedProperties", `<xades:SignedProperties ${ds} ${xades}`), "utf8");
+  signedInfo += `<ds:DigestValue>${signedPropsDigest}</ds:DigestValue>`;
+  signedInfo += `</ds:Reference>`;
+  signedInfo += `</ds:SignedInfo>`;
 
-  const sha1SignedProperties = sha256Base64(
-    signedProperties.replace(
-      "<xades:SignedProperties",
-      "<xades:SignedProperties " + nameSpaces
-    ),
-    "utf8"
-  );
-
-  let keyInfo = "";
-  keyInfo += '<ds:KeyInfo Id="Certificate' + certificateNumber + '">';
-  keyInfo += "\n<ds:X509Data>";
-  keyInfo += "\n<ds:X509Certificate>\n";
-  keyInfo += certificateX509;
-  keyInfo += "\n</ds:X509Certificate>";
-  keyInfo += "\n</ds:X509Data>";
-  keyInfo += "\n</ds:KeyInfo>";
-
-  let signedInfo = "";
-  signedInfo += "<ds:SignedInfo>";
-  signedInfo +=
-    '\n<ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>';
-  signedInfo +=
-    '\n<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>';
-
-  // 1️⃣ Referencia al comprobante
-  signedInfo +=
-    '\n<ds:Reference Id="Reference-ID' +
-    referenceIdNumber +
-    '" URI="#comprobante">';
-  signedInfo += "\n<ds:Transforms>";
-  signedInfo +=
-    '\n<ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>';
-  signedInfo += "\n</ds:Transforms>";
-  signedInfo +=
-    '\n<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>';
-  signedInfo += "\n<ds:DigestValue>";
-  signedInfo += sha1_xml;
-  signedInfo += "</ds:DigestValue>";
-  signedInfo += "\n</ds:Reference>";
-
-  // 2️⃣ Referencia a SignedProperties
-  signedInfo +=
-    '\n<ds:Reference Type="http://uri.etsi.org/01903#SignedProperties" URI="#Signature' +
-    signatureNumber +
-    "-SignedProperties" +
-    signedPropertiesNumber +
-    '">';
-  signedInfo +=
-    '\n<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>';
-  signedInfo += "\n<ds:DigestValue>";
-  signedInfo += sha1SignedProperties;
-  signedInfo += "</ds:DigestValue>";
-  signedInfo += "\n</ds:Reference>";
-
-  signedInfo += "\n</ds:SignedInfo>";
-
-  const canonicalizedSignedInfo = signedInfo.replace(
-    "<ds:SignedInfo",
-    "<ds:SignedInfo " + nameSpaces
-  );
-
+  // Sign the SignedInfo
+  const privateKeyBag = keyBags[(forge as any).oids.pkcs8ShroudedKeyBag]![0] as any;
+  const privateKey = privateKeyBag.key;
   const md = forge.md.sha256.create();
-  md.update(canonicalizedSignedInfo, "utf8");
-  const signature = Buffer.from(key.sign(md), "binary")
-    .toString("base64")
-    .match(/.{1,76}/g)!
-    .join("\n");
+  md.update(signedInfo.replace("<ds:SignedInfo", `<ds:SignedInfo ${ds} ${xades}`), "utf8");
+  const signatureValue = Buffer.from(privateKey.sign(md), "binary").toString("base64");
 
-  let xadesBes = "";
-  xadesBes +=
-    "<ds:Signature " + nameSpaces + ' Id="Signature' + signatureNumber + '">';
-  xadesBes += "\n" + signedInfo;
+  // Build the full Signature element
+  let signatureXml = `<ds:Signature ${ds} ${xades} Id="Signature${sigNum}">`;
+  signatureXml += signedInfo;
+  signatureXml += `<ds:SignatureValue>${signatureValue}</ds:SignatureValue>`;
+  signatureXml += `<ds:KeyInfo><ds:X509Data><ds:X509Certificate>${pem}</ds:X509Certificate></ds:X509Data></ds:KeyInfo>`;
+  signatureXml += `<ds:Object><xades:QualifyingProperties Target="#Signature${sigNum}">${signedProps}</xades:QualifyingProperties></ds:Object>`;
+  signatureXml += `</ds:Signature>`;
 
-  xadesBes +=
-    '\n<ds:SignatureValue Id="SignatureValue' + signatureValueNumber + '">\n';
-
-  xadesBes += signature;
-  xadesBes += "\n</ds:SignatureValue>";
-  xadesBes += "\n" + keyInfo;
-  xadesBes += "\n<ds:Object>";
-
-  xadesBes +=
-    "<xades:QualifyingProperties " +
-    'Target="#Signature' +
-    signatureNumber +
-    '" ' +
-    'xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" ' +
-    'xmlns:xades141="http://uri.etsi.org/01903/v1.4.1#">';
-  xadesBes += signedProperties;
-
-  xadesBes += "</xades:QualifyingProperties>";
-  xadesBes += "</ds:Object>";
-  xadesBes += "</ds:Signature>";
-
-  return xml.replace(/(<[^<]+)$/, xadesBes + "$1");
+  // Inject the Signature before the closing root tag
+  return xml.replace(/(<\/[^>]+>)$/, signatureXml + "$1"); */
 }
