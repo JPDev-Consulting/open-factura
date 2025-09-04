@@ -58,13 +58,14 @@ export type TotalWithTax = {
   0% 0
   12% 2
   14% 3
+  15% 4
+  5% 5
   No Objeto de Impuesto 6
   Exento de IVA 7
   IVA diferenciado4 8
-
-  ICE - Ver tabla 18 de la ficha tecnica de comprobantes electronicos
+  13% 10
   */
-  codigoPorcentaje: "0" | "2" | "3" | "6" | "7" | "8";
+  codigoPorcentaje: "0" | "2" | "3" | "4" | "6" | "7" | "8" | "10";
   descuentoAdicional: string;
   baseImponible: string;
   tarifa?: string;
