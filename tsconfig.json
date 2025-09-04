@@ -1,9 +1,9 @@
 {
   "compilerOptions": {
     "lib": ["ESNext"],
-    "module": "esnext",
+    "module": "node16",
     "target": "esnext",
-    "moduleResolution": "node",
+    "moduleResolution": "node16",
     "noEmit": false,
     "strict": true,
     "downlevelIteration": true,

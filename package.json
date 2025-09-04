@@ -1,6 +1,6 @@
 {
   "name": "@jpdev-consulting/open-factura",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "author": {
     "name": "Caja Smaert",
     "email": "infodev@cajasmart.com",
@@ -20,9 +20,9 @@
     "registry": "https://npm.pkg.github.com/"
   },
   "scripts": {
-    "build": "tsup",
-    "start": "tsc ./src/index.ts",
-    "publish-changes": "npm run build & npm link & npm link open-factura & npm publish"
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "prepublishOnly": "npm run build",
+    "release": "npm publish"
   },
   "devDependencies": {
     "bun-types": "latest",

@@ -65,7 +65,7 @@ export type TotalWithTax = {
   IVA diferenciado4 8
   13% 10
   */
-  codigoPorcentaje: "0" | "2" | "3" | "4" | "6" | "7" | "8" | "10";
+  codigoPorcentaje: "0" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "10";
   descuentoAdicional: string;
   baseImponible: string;
   tarifa?: string;
