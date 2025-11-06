@@ -1,9 +1,9 @@
 {
   "compilerOptions": {
     "lib": ["ESNext"],
-    "module": "esnext",
+    "module": "node16",
     "target": "esnext",
-    "moduleResolution": "node",
+    "moduleResolution": "node16",
     "noEmit": false,
     "strict": true,
     "downlevelIteration": true,
@@ -15,14 +15,8 @@
     "types": [
       "bun-types" // add Bun global
     ],
-    "outDir": "./dist",
+    "outDir": "./dist"
   },
-  "include": [
-    "./src/**/*",
-    "./src/services/authorization.ts"
-  ],
-  "exclude": [
-    "node_modules",
-    "test"
-  ]
+  "include": ["./src/**/*", "./src/services/authorization.ts"],
+  "exclude": ["node_modules", "test"]
 }

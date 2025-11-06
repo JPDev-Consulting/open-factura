@@ -51,16 +51,18 @@ function generateRandomEightDigitNumber(): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function generateVerificatorDigit(accessKey: string) {
-  let result = 0;
-  let addition = 0;
-  let multiple = 7;
-  for (let i = 0; i < accessKey.length; i++) {
-    addition += parseInt(accessKey.charAt(i)) * multiple;
-    multiple > 2 ? multiple-- : (multiple = 7);
+function generateVerificatorDigit(accessKey: string): string {
+  const weights = [2, 3, 4, 5, 6, 7];
+  let total = 0;
+  let weightIndex = 0;
+  // iterate from rightmost digit
+  for (let i = accessKey.length - 1; i >= 0; i--) {
+    const num = parseInt(accessKey.charAt(i), 10);
+    total += num * weights[weightIndex];
+    weightIndex = (weightIndex + 1) % weights.length;
   }
-  result = 11 - (addition % 11);
-  result === 10 ? (result = 1) : (result = result);
-  result === 11 ? (result = 0) : (result = result);
-  return result;
+  const mod = 11 - (total % 11);
+  if (mod === 11) return "0";
+  if (mod === 10) return "1";
+  return String(mod);
 }
